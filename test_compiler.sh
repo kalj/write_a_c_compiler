@@ -33,9 +33,10 @@ run_our_program () {
 }
 
 run_correct_program () {
-    expected_out=`./a.out`
+    correct_program=$1
+    expected_out=`$correct_program`
     expected_exit_code=$?
-    rm a.out
+    rm $correct_program
 }
 
 compare_program_results () {
@@ -48,40 +49,95 @@ compare_program_results () {
     fi
 }
 
+
+test_valid_program() {
+
+    prog=$1
+
+    refprog=`tmpfile`
+    gcc -w $prog -o $refprog
+    run_correct_program $refprog
+
+    base="${prog%.*}" #name of executable (filename w/out extension)
+    test_name="${base##*valid/}"
+
+    print_test_name $test_name
+    $cmp $prog 2>/dev/null
+    status=$?
+
+    if [[ $test_name == "skip_on_failure"* ]]; then
+        # this may depend on features we haven't implemented yet
+        # if compilation succeeds, make sure it gives the right result
+        # otherwise don't count it as success or failure
+        if [[ -f $base ]] && [[ $status -eq 0 ]]; then
+            # it succeeded, so run it and make sure it gives the right result
+            run_our_program $base
+            compare_program_results
+        else
+            test_not_implemented
+        fi
+    else
+        run_our_program $base
+        compare_program_results
+    fi
+}
+
+test_invalid_program() {
+
+    prog=$1
+
+    base="${prog%.*}" #name of executable (filename w/out extension)
+    test_name="${base##*invalid/}"
+
+    $cmp $prog >/dev/null 2>&1
+    status=$? #failed, as we expect, if exit code != 0
+    print_test_name $test_name
+
+    # make sure neither executable nor assembly was produced
+    # and exit code is non-zero
+    if [[ -f $base || -f $base".s" ]]
+    then
+        test_failure
+        rm $base 2>/dev/null
+        rm $base".s" 2>/dev/null
+    else
+        test_success
+    fi
+}
+
+run_in_background() {
+    test_command=$1
+    shift
+
+    for prog in $* ; do
+
+        output_file="${prog%.*}.output"
+
+        $test_command $prog > $output_file &
+    done
+    wait
+    # print
+    for prog in $* ; do
+        base="${prog%.*}" #name of executable (filename w/out extension)
+
+        output_file="${base}.output"
+        cat $output_file
+        rm $output_file
+    done
+}
+
+
 test_stage () {
     success=0
     fail=0
+
     echo "===================================================="
     echo "STAGE $1"
     echo "===================Valid Programs==================="
-    for prog in `find . -type f -name "*.c" -path "./stage_$1/valid/*" -not -path "*/valid_multifile/*" 2>/dev/null`; do
 
-        gcc -w $prog
-        run_correct_program
+    run_in_background test_valid_program `find . -type f -name "*.c" -path "./stage_$1/valid/*" -not -path "*/valid_multifile/*" 2>/dev/null`
 
-        base="${prog%.*}" #name of executable (filename w/out extension)
-        test_name="${base##*valid/}"
 
-        print_test_name $test_name
-        $cmp $prog 2>/dev/null
-        status=$?
-
-        if [[ $test_name == "skip_on_failure"* ]]; then
-            # this may depend on features we haven't implemented yet
-            # if compilation succeeds, make sure it gives the right result
-            # otherwise don't count it as success or failure
-            if [[ -f $base ]] && [[ $status -eq 0 ]]; then
-                # it succeeded, so run it and make sure it gives the right result
-                run_our_program $base
-                compare_program_results
-            else
-                test_not_implemented
-            fi
-        else
-            run_our_program $base
-            compare_program_results
-        fi
-    done
     # programs with multiple source files
     for dir in `ls -d stage_$1/valid_multifile/* 2>/dev/null` ; do
         gcc -w $dir/*
@@ -102,26 +158,9 @@ test_stage () {
 
     done
     echo "===================Invalid Programs================="
-    for prog in `ls stage_$1/invalid/{,**/}*.c 2>/dev/null`; do
 
-        base="${prog%.*}" #name of executable (filename w/out extension)
-        test_name="${base##*invalid/}"
+    run_in_background test_invalid_program `ls stage_$1/invalid/{,**/}*.c 2>/dev/null`
 
-        $cmp $prog >/dev/null 2>&1
-        status=$? #failed, as we expect, if exit code != 0
-        print_test_name $test_name
-
-        # make sure neither executable nor assembly was produced
-        # and exit code is non-zero
-        if [[ -f $base || -f $base".s" ]]
-        then
-            test_failure
-            rm $base 2>/dev/null
-            rm $base".s" 2>/dev/null
-        else
-            test_success
-        fi
-    done
     echo "===================Stage $1 Summary================="
     printf "%d successes, %d failures\n" $success $fail
     ((success_total=success_total+success))
