@@ -13,13 +13,15 @@ print_test_name () {
 }
 
 test_success () {
+    result_file=$1
     echo "OK"
-    ((success++))
+    echo "OK" > $result_file
 }
 
 test_failure () {
+    result_file=$1
     echo "FAIL"
-    ((fail++))
+    echo "FAIL" > $result_file
 }
 
 test_not_implemented () {
@@ -40,12 +42,15 @@ run_correct_program () {
 }
 
 compare_program_results () {
+
+    result_file=$1
+
     # make sure exit code is correct
     if [ "$expected_exit_code" -ne "$actual_exit_code" ] || [ "$expected_out" != "$actual_out" ]
     then
-        test_failure
+        test_failure $result_file
     else
-        test_success
+        test_success $result_file
     fi
 }
 
@@ -53,6 +58,7 @@ compare_program_results () {
 test_valid_program() {
 
     prog=$1
+    result_file=$2
 
     refprog=`tmpfile`
     gcc -w $prog -o $refprog
@@ -72,19 +78,20 @@ test_valid_program() {
         if [[ -f $base ]] && [[ $status -eq 0 ]]; then
             # it succeeded, so run it and make sure it gives the right result
             run_our_program $base
-            compare_program_results
+            compare_program_results $result_file
         else
             test_not_implemented
         fi
     else
         run_our_program $base
-        compare_program_results
+        compare_program_results $result_file
     fi
 }
 
 test_invalid_program() {
 
     prog=$1
+    result_file=$2
 
     base="${prog%.*}" #name of executable (filename w/out extension)
     test_name="${base##*invalid/}"
@@ -97,11 +104,11 @@ test_invalid_program() {
     # and exit code is non-zero
     if [[ -f $base || -f $base".s" ]]
     then
-        test_failure
+        test_failure $result_file
         rm $base 2>/dev/null
         rm $base".s" 2>/dev/null
     else
-        test_success
+        test_success $result_file
     fi
 }
 
@@ -112,16 +119,29 @@ run_in_background() {
     for prog in $* ; do
 
         output_file="${prog%.*}.output"
+        result_file="${prog%.*}.result"
 
-        $test_command $prog > $output_file &
+        $test_command $prog $result_file > $output_file &
     done
     wait
     # print
     for prog in $* ; do
-        base="${prog%.*}" #name of executable (filename w/out extension)
+        result_file="${prog%.*}.result"
+        output_file="${prog%.*}.output"
 
-        output_file="${base}.output"
+        read res < $result_file
+
+        if [ $res == "OK" ] ; then
+            ((success++))
+        elif [ $res == "FAIL" ] ; then
+            ((fail++))
+        else
+            >&2 echo "Failed running test, no result output file was produced"
+            exit 1
+        fi
+
         cat $output_file
+        rm $result_file
         rm $output_file
     done
 }
@@ -185,7 +205,8 @@ if test 1 -lt $#; then
        test_stage ${testcases[$i-1]}
    done
    total_summary
-   exit 0
+
+   exit $failure_total
 fi
 
 num_stages=10
