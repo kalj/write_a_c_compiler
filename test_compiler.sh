@@ -60,7 +60,7 @@ test_valid_program() {
     prog=$1
     result_file=$2
 
-    refprog=`tmpfile`
+    refprog=`tempfile`
     gcc -w $prog -o $refprog
     run_correct_program $refprog
 
